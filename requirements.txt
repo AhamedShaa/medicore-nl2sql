@@ -1,0 +1,55 @@
+# ============================================================
+# MediCore NL2SQL Platform — Python Dependencies
+# ============================================================
+# Install:  pip install -r requirements.txt
+
+# ── LangChain + LangGraph ──────────────────────────────────────────────────────
+# LangGraph: multi-agent StateGraph orchestration
+langgraph>=0.2.0
+
+# LangChain core: LCEL (|) chains, ChatPromptTemplate, output parsers
+langchain-core>=0.3.0
+langchain>=0.3.0
+
+# LangChain OpenAI: ChatOpenAI → points at OpenRouter (OpenAI-compatible)
+langchain-openai>=0.2.0
+openai>=1.0.0               # Required by langchain-openai
+
+# LangChain Community: SQLDatabase for schema introspection
+langchain-community>=0.3.0
+
+# ── Database ───────────────────────────────────────────────────────────────────
+# SQLAlchemy: used by LangChain SQLDatabase (SQLite + PostgreSQL support)
+sqlalchemy>=2.0.0
+
+# sqlparse: deterministic SQL syntax validation in ValidatorAgent
+sqlparse>=0.5.0
+
+# ── Configuration ──────────────────────────────────────────────────────────────
+# python-dotenv: load .env file (API keys)
+python-dotenv>=1.0.0
+
+# PyYAML: load config/params.yaml
+pyyaml>=6.0.0
+
+# ── Logging ────────────────────────────────────────────────────────────────────
+# Loguru: zero-boilerplate colourised logging with auto file rotation
+loguru>=0.7.0
+
+# ── Observability ──────────────────────────────────────────────────────────────
+# LangFuse: LLM trace monitoring (optional — works without API keys)
+langfuse>=2.0.0
+
+# ── Dashboard & Charts ────────────────────────────────────────────────────────
+# Streamlit: Python-native web UI (+5 bonus pts)
+streamlit>=1.35.0
+
+# Plotly: interactive charts (bar, line, pie, table)
+plotly>=5.22.0
+
+# pandas: DataFrame for chart rendering and data display
+pandas>=2.0.0
+
+# ── Testing ────────────────────────────────────────────────────────────────────
+# pytest: test runner (17 unit tests, no API key required)
+pytest>=8.0.0

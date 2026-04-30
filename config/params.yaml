@@ -1,0 +1,80 @@
+##############################################################################
+# params.yaml — MediCore NL2SQL Platform Configuration
+#
+# ALL tunable parameters live here. Nothing is hardcoded in source files.
+# Secrets (API keys) are loaded from .env and are never placed in this file.
+##############################################################################
+
+# ── LLM ──────────────────────────────────────────────────────────────────────
+model:
+  provider: openrouter              # OpenRouter provides a unified OpenAI-compatible API
+  name: openai/gpt-4o               # OpenRouter model ID — change to swap models
+  max_tokens: 1024
+  temperature: 0                    # Deterministic output for SQL generation
+  base_url: https://openrouter.ai/api/v1
+  backup_name: openai/gpt-4o-mini   # Cheaper/faster fallback if primary model fails
+  backup_max_tokens: 512            # Backup gets a tighter token budget
+  site_url: https://medicore-nl2sql.app   # HTTP-Referer header (OpenRouter requirement)
+  site_name: MediCore NL2SQL
+
+# ── Database ─────────────────────────────────────────────────────────────────
+database:
+  type: sqlite                      # sqlite | postgresql — change DB_PATH in .env for prod
+  path: ./medicore.db               # Overridden by DB_PATH in .env if set
+  schema_sample_rows: 2             # Rows per table shown in LLM schema context
+
+# ── Pipeline ─────────────────────────────────────────────────────────────────
+pipeline:
+  max_retry_attempts: 3             # Max SQL generation retries on validation failure
+  max_exec_repair_attempts: 2       # Max retries when valid SQL fails during execution
+
+# ── Safety ───────────────────────────────────────────────────────────────────
+# These keywords are blocked at the validator layer (defense-in-depth).
+# The LLM prompt also enforces SELECT-only, but deterministic keyword checks
+# are faster, cheaper, and 100% reliable.
+safety:
+  blocked_keywords:
+    - DROP
+    - DELETE
+    - TRUNCATE
+    - UPDATE
+    - INSERT
+    - ALTER
+    - CREATE
+    - EXEC
+    - EXECUTE
+    - ATTACH
+    - DETACH
+    - PRAGMA
+    - "xp_"                         # SQL Server stored proc prefix (future-proofing)
+    - "--"                           # SQL comment injection
+
+# ── LangFuse Observability ───────────────────────────────────────────────────
+# Traces every agent call: input, output, latency, tokens.
+# Works without keys — falls back to local JSON in traces/ folder.
+langfuse:
+  host: https://cloud.langfuse.com
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  level: INFO
+  file: logs/medicore.log
+  rotation: 10 MB                   # Rotate when file reaches 10 MB
+  retention: 30 days                # Keep logs for 30 days
+  format: "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
+
+# ── Streamlit Dashboard ───────────────────────────────────────────────────────
+dashboard:
+  title: MediCore NL2SQL Analytics
+  max_query_history: 20
+  prebuilt_queries:
+    - label: "Revenue Trend"
+      query: "Show monthly revenue trend for the past year"
+    - label: "Top Diagnoses"
+      query: "What are the top 10 most common diagnoses?"
+    - label: "Doctor Load"
+      query: "Which doctors have the most appointments?"
+    - label: "Payment Methods"
+      query: "What is the breakdown of payment methods used?"
+    - label: "Monthly Admissions"
+      query: "Show monthly admissions vs discharges"
