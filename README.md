@@ -6,9 +6,6 @@ The project is built around a LangGraph workflow with explicit routing, SQL gene
 
 ![MediCore NL2SQL architecture](docs/diagram.png)
 
-## Repository
-
-GitHub: [AhamedShaa/medicore-nl2sql](https://github.com/AhamedShaa/medicore-nl2sql)
 
 ## Highlights
 
