@@ -32,8 +32,6 @@ tools/miktex-repository/
 *.out
 *.toc
 *.synctex.gz
-docs/engineering_report.tex
-docs/engineering_report.pdf
 
 # Local databases and generated data
 *.db
