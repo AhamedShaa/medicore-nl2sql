@@ -1,6 +1,6 @@
 # MediCore NL2SQL
 
-Multi-agent natural language to SQL analytics platform for the MediCore Hospital dataset.
+Multi-agent natural language to SQL analytics platform for the Nawaloka Hospital.
 
 MediCore NL2SQL lets a user ask hospital analytics questions in plain English, routes the request through a LangGraph agent workflow, generates safe read-only SQL, executes it against SQLite, and returns charts, tables, and natural language insights in a Streamlit dashboard.
 
