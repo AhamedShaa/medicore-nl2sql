@@ -23,6 +23,18 @@ logs/
 traces/
 *.log
 
+# Local LaTeX tooling and generated build files
+tools/
+tools/tectonic/
+tools/miktexsetup/
+tools/miktex-repository/
+*.aux
+*.out
+*.toc
+*.synctex.gz
+docs/engineering_report.tex
+docs/engineering_report.pdf
+
 # Local databases and generated data
 *.db
 *.sqlite
@@ -39,4 +51,3 @@ traces/
 Thumbs.db
 .vscode/
 .idea/
-

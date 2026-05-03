@@ -28,6 +28,13 @@ pipeline:
   max_retry_attempts: 3             # Max SQL generation retries on validation failure
   max_exec_repair_attempts: 2       # Max retries when valid SQL fails during execution
 
+# Multi-turn memory
+memory:
+  enabled: true
+  path: ./data/conversations.db
+  max_turns: 5
+  max_context_chars: 2500
+
 # ── Safety ───────────────────────────────────────────────────────────────────
 # These keywords are blocked at the validator layer (defense-in-depth).
 # The LLM prompt also enforces SELECT-only, but deterministic keyword checks

@@ -96,6 +96,10 @@ _env_log = os.getenv("LOG_LEVEL", "")
 if _env_log:
     params.logging.level = _env_log.upper()
 
+_env_memory_path = os.getenv("MEMORY_DB_PATH", "")
+if _env_memory_path:
+    params.memory.path = _env_memory_path
+
 
 # ── Startup validation ────────────────────────────────────────────────────────
 

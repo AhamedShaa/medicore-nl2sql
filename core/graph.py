@@ -64,6 +64,7 @@ from typing import Any, Dict
 
 from langgraph.graph import END, StateGraph
 
+from agents.contextualizer_agent import ContextualizerAgent
 from agents.fallback_agent import FallbackAgent
 from agents.result_interpreter import ResultInterpreterAgent
 from agents.router_agent import RouterAgent
@@ -71,6 +72,7 @@ from agents.sql_generator import SQLGeneratorAgent
 from agents.validator_agent import ValidatorAgent
 from config import params
 from core.executor import ExecutionResult, execute_query
+from core.memory import ConversationMemory, memory_enabled
 from core.schema_loader import get_schema_dict
 from core.state import NL2SQLState, make_initial_state
 from core.tracer import Tracer, set_active_trace_id
@@ -82,10 +84,12 @@ from utils.log import logger
 # Schema is loaded once (LRU-cached) and baked into the generator at init.
 
 _router      = RouterAgent()
+_contextualizer = ContextualizerAgent()
 _generator   = SQLGeneratorAgent()
 _validator   = ValidatorAgent()
 _interpreter = ResultInterpreterAgent()
 _fallback    = FallbackAgent()
+_memory      = ConversationMemory()
 
 
 # ── Node functions ─────────────────────────────────────────────────────────────
@@ -97,10 +101,29 @@ _fallback    = FallbackAgent()
 #   with failure_stage and failure_category set. This ensures no unhandled
 #   exception can crash the pipeline — the graph always routes to handle_fallback.
 
+def contextualize_query_node(state: NL2SQLState) -> Dict[str, Any]:
+    """Rewrite follow-up questions into standalone questions using recent turns."""
+    try:
+        resolved_query, _, used_backup = _contextualizer.contextualize(
+            query=state["query"],
+            memory_context=state.get("memory_context", ""),
+        )
+        return {
+            "resolved_query": resolved_query,
+            "backup_model_used": state.get("backup_model_used", False) or used_backup,
+        }
+    except Exception as exc:
+        logger.warning(f"contextualize_query_node failed; using raw query: {exc}")
+        return {
+            "resolved_query": state["query"],
+            "error": str(exc),
+        }
+
+
 def route_intent_node(state: NL2SQLState) -> Dict[str, Any]:
     """Classify the user query: analytics / clarify / blocked."""
     try:
-        result, _ = _router.route(state["query"])
+        result, _ = _router.route(state.get("resolved_query") or state["query"])
         return {
             "intent": result.intent,
             "intent_reason": result.reason,
@@ -128,7 +151,7 @@ def generate_sql_node(state: NL2SQLState) -> Dict[str, Any]:
     try:
         validation_error = state.get("last_validation_error") or None
         sql, _, used_backup = _generator.generate(
-            state["query"],
+            state.get("resolved_query") or state["query"],
             validation_error=validation_error,
         )
         return {
@@ -174,12 +197,35 @@ def execute_sql_node(state: NL2SQLState) -> Dict[str, Any]:
         result = execute_query(state["sql"])
 
         if result.success:
+            if (
+                result.row_count == 0
+                and state.get("exec_repair_attempts", 0) < params.pipeline.max_exec_repair_attempts
+            ):
+                empty_error = _empty_result_repair_error(state)
+                logger.info(
+                    "Query executed successfully but returned zero rows; "
+                    "routing through execution repair before interpretation."
+                )
+                return {
+                    "exec_rows":      result.rows,
+                    "exec_columns":   result.columns,
+                    "exec_row_count": result.row_count,
+                    "exec_time_ms":   result.execution_time_ms,
+                    "exec_error":     empty_error,
+                    "failure_stage":   "execution",
+                    "failure_category": "execution",
+                    "error":           None,
+                }
+
             return {
                 "exec_rows":      result.rows,
                 "exec_columns":   result.columns,
                 "exec_row_count": result.row_count,
                 "exec_time_ms":   result.execution_time_ms,
                 "exec_error":     "",
+                "failure_stage":   "",
+                "failure_category": "",
+                "error":           None,
             }
 
         # Execution failed — store error for repair_sql_node
@@ -216,7 +262,9 @@ def repair_sql_node(state: NL2SQLState) -> Dict[str, Any]:
     try:
         repaired_sql, _, used_backup = _generator.repair(
             sql=state["sql"],
-            exec_error=state.get("exec_error", "Unknown execution error"),
+            exec_error=state.get("last_validation_error")
+            or state.get("exec_error", "Unknown execution error"),
+            query=state.get("resolved_query") or state["query"],
         )
         return {
             "sql": repaired_sql,
@@ -254,7 +302,10 @@ def interpret_result_node(state: NL2SQLState) -> Dict[str, Any]:
     )
 
     try:
-        interpreted, _ = _interpreter.interpret(state["query"], exec_result)
+        interpreted, _ = _interpreter.interpret(
+            state.get("resolved_query") or state["query"],
+            exec_result,
+        )
         return {
             "insight":       interpreted.insight,
             "chart_spec":    vars(interpreted.chart_spec) if interpreted.chart_spec else None,
@@ -419,6 +470,7 @@ def _build_graph() -> Any:
     graph = StateGraph(NL2SQLState)
 
     # Register nodes
+    graph.add_node("contextualize_query", contextualize_query_node)
     graph.add_node("route_intent",      route_intent_node)
     graph.add_node("generate_sql",      generate_sql_node)
     graph.add_node("validate_sql",      validate_sql_node)
@@ -428,9 +480,10 @@ def _build_graph() -> Any:
     graph.add_node("handle_fallback",   handle_fallback_node)
 
     # Entry point
-    graph.set_entry_point("route_intent")
+    graph.set_entry_point("contextualize_query")
 
     # Edges
+    graph.add_edge("contextualize_query", "route_intent")
     graph.add_conditional_edges(
         "route_intent",
         _after_route_intent,
@@ -476,12 +529,13 @@ nl2sql_app = _build_graph()
 
 # ── Public entry point ─────────────────────────────────────────────────────────
 
-def run_pipeline(query: str) -> NL2SQLState:
+def run_pipeline(query: str, conversation_id: str | None = None) -> NL2SQLState:
     """
     Run the full NL2SQL pipeline for one user query.
 
     Args:
         query: Natural language question from the user.
+        conversation_id: Optional stable conversation key for multi-turn memory.
 
     Returns:
         Final NL2SQLState dict. Key fields:
@@ -509,14 +563,32 @@ def run_pipeline(query: str) -> NL2SQLState:
             state["trace_file"]           → Path to saved JSON trace
     """
     session_id = f"q-{uuid.uuid4().hex[:8]}"   # short human-readable ID for logs/JSON
+    conversation_id = conversation_id or f"c-{uuid.uuid4().hex[:8]}"
+    memory_context = ""
+    conversation_history = []
+    turn_id = 1
+    if memory_enabled():
+        conversation_history = _memory.load_recent(conversation_id)
+        memory_context = _memory.build_context(conversation_history)
+        turn_id = _memory.next_turn_id(conversation_id)
     lf_trace_id = uuid.uuid4().hex             # 32-char hex required by LangFuse v4 OTel
-    logger.info(f"Pipeline START — session={session_id} | query='{query[:80]}'")
+    logger.info(
+        f"Pipeline START - session={session_id} | conversation={conversation_id} "
+        f"| turn={turn_id} | query='{query[:80]}'"
+    )
 
     # Set active trace ID so all LLM calls in this pipeline run are grouped
     # under one LangFuse trace. Must be 32 lowercase hex chars (OTel format).
     set_active_trace_id(lf_trace_id)
 
-    initial = make_initial_state(query, session_id)
+    initial = make_initial_state(
+        query=query,
+        session_id=session_id,
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        memory_context=memory_context,
+        conversation_history=conversation_history,
+    )
     t0 = time.perf_counter()
 
     try:
@@ -535,6 +607,9 @@ def run_pipeline(query: str) -> NL2SQLState:
         }
 
     final_state["total_latency_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+
+    if memory_enabled():
+        _memory.save_turn(conversation_id, turn_id, final_state)
 
     # Save trace (local JSON + optional LangFuse)
     tracer = Tracer(session_id=session_id)
@@ -565,6 +640,7 @@ _REPAIRABLE_PATTERNS = [
     "datatype mismatch",                        # add CAST(col AS type)
     "aggregate functions not allowed in where", # move aggregate to HAVING clause
     "misuse of aggregate",                      # aggregate used outside SELECT/HAVING
+    "query returned zero rows",                 # valid SQL, but likely over-restrictive
 ]
 
 
@@ -572,6 +648,25 @@ def _is_repairable_error(error: str) -> bool:
     """Return True if the SQLite error is likely fixable with a minimal SQL edit."""
     err_lower = error.lower()
     return any(pattern in err_lower for pattern in _REPAIRABLE_PATTERNS)
+
+
+def _empty_result_repair_error(state: NL2SQLState) -> str:
+    """
+    Synthetic repair reason for SQL that executes but returns no rows.
+
+    SQLite treats zero rows as success, but for NL2SQL it can mean the generated
+    query was logically too restrictive: wrong literal value, wrong join path,
+    incorrect HAVING condition, or an unintended date/window filter. Routing it
+    through repair gives the model one chance to inspect the SQL before we tell
+    the user that the database genuinely has no matching records.
+    """
+    question = state.get("resolved_query") or state.get("query", "")
+    return (
+        "Query returned zero rows. Re-check the SQL against the original user "
+        f"question: {question!r}. Preserve the requested intent, but verify "
+        "filters, enum/literal values, join paths, aliases, HAVING logic, and "
+        "date/window assumptions."
+    )
 
 
 def _get_schema_safe() -> dict:

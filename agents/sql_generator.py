@@ -71,16 +71,20 @@ EXAMPLE:
 
 _REPAIR_SYSTEM = """\
 You are a SQL debugger for a SQLite database. A previously generated SQL query has
-failed at execution time with a runtime error. Your task is to fix ONLY the error.
+failed at execution time or returned an unusable empty result. Your task is to fix
+ONLY that issue.
 
 DATABASE SCHEMA (for reference):
 {schema}
 
 RULES:
 1. Return ONLY the corrected SELECT statement — no explanation, no markdown.
-2. Make the minimal change needed to fix the error.
+2. Make the minimal change needed to fix the error or empty-result cause.
 3. Do not change the query's intent or the tables/columns used unless the error requires it.
 4. Use only SQLite-compatible syntax (no PostgreSQL, no MySQL extensions).
+5. If the query returned zero rows, preserve the user's requested meaning while checking for
+   overly restrictive filters, wrong enum/literal values, incorrect join paths, alias misuse,
+   and date/window assumptions. Do not invent rows by ignoring the user's main filter.
 
 Common SQLite execution errors and fixes:
   "ambiguous column name"   → qualify with table alias, e.g. p.patient_id instead of patient_id
@@ -122,6 +126,7 @@ class SQLGeneratorAgent(BaseAgent):
             ("system", _REPAIR_SYSTEM),
             ("human",
              "FAILING SQL:\n{sql}\n\n"
+             "ORIGINAL USER QUESTION:\n{query}\n\n"
              "EXECUTION ERROR:\n{exec_error}\n\n"
              "Return the corrected SQL only."),
         ]).partial(schema=schema)
@@ -176,6 +181,7 @@ class SQLGeneratorAgent(BaseAgent):
         self,
         sql: str,
         exec_error: str,
+        query: Optional[str] = None,
     ) -> Tuple[str, float, bool]:
         """
         Repair a SQL query that passed validation but failed at execution time.
@@ -188,7 +194,8 @@ class SQLGeneratorAgent(BaseAgent):
 
         Args:
             sql:        The SQL that failed execution.
-            exec_error: The exact SQLite error message.
+            exec_error: The exact SQLite error message, or an empty-result repair reason.
+            query:      Original natural language question, used to preserve intent.
 
         Returns:
             (repaired_sql, latency_ms, backup_model_used)
@@ -196,7 +203,11 @@ class SQLGeneratorAgent(BaseAgent):
         t0 = time.perf_counter()
         raw, used_backup = self.invoke_with_backup(
             self._primary_repair, self._backup_repair,
-            {"sql": sql, "exec_error": exec_error},
+            {
+                "sql": sql,
+                "exec_error": exec_error,
+                "query": query or "Not provided",
+            },
         )
         latency = (time.perf_counter() - t0) * 1000
 

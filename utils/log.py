@@ -59,17 +59,30 @@ def _configure_logger() -> None:
     log_path = Path(params.logging.file)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    logger.add(
-        str(log_path),
-        level=level,
-        format=fmt,
-        rotation=params.logging.rotation,    # e.g. "10 MB"
-        retention=params.logging.retention,  # e.g. "30 days"
-        encoding="utf-8",
-        backtrace=True,
-        diagnose=True,
-        enqueue=True,   # Thread-safe async writes
-    )
+    try:
+        logger.add(
+            str(log_path),
+            level=level,
+            format=fmt,
+            rotation=params.logging.rotation,    # e.g. "10 MB"
+            retention=params.logging.retention,  # e.g. "30 days"
+            encoding="utf-8",
+            backtrace=True,
+            diagnose=True,
+            enqueue=True,   # Thread-safe async writes where multiprocessing is allowed
+        )
+    except PermissionError:
+        logger.add(
+            str(log_path),
+            level=level,
+            format=fmt,
+            rotation=params.logging.rotation,
+            retention=params.logging.retention,
+            encoding="utf-8",
+            backtrace=True,
+            diagnose=True,
+            enqueue=False,
+        )
 
 
 _configure_logger()

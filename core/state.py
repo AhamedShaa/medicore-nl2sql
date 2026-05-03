@@ -46,6 +46,13 @@ class NL2SQLState(TypedDict):
     query: str                            # Original natural language query
     session_id: str                       # Unique run ID (used for trace file name)
 
+    # Multi-turn memory
+    conversation_id: str                  # Stable ID for a user conversation
+    turn_id: int                          # 1-based turn number inside the conversation
+    memory_context: str                   # Compact summary of recent prior turns
+    resolved_query: str                   # Standalone query after contextualization
+    conversation_history: List[Dict[str, Any]]  # Recent raw memory records
+
     # ── Routing ────────────────────────────────────────────────────────────────
     intent: str                           # "analytics" | "clarify" | "blocked"
     intent_reason: str                    # Why the router chose this intent
@@ -94,7 +101,14 @@ class NL2SQLState(TypedDict):
     total_latency_ms: float               # End-to-end wall-clock time
 
 
-def make_initial_state(query: str, session_id: str) -> NL2SQLState:
+def make_initial_state(
+    query: str,
+    session_id: str,
+    conversation_id: str = "",
+    turn_id: int = 0,
+    memory_context: str = "",
+    conversation_history: Optional[List[Dict[str, Any]]] = None,
+) -> NL2SQLState:
     """
     Build a clean initial state for a new pipeline run.
     All fields start empty / zero — nodes fill them in progressively.
@@ -109,6 +123,11 @@ def make_initial_state(query: str, session_id: str) -> NL2SQLState:
     return NL2SQLState(
         query=query,
         session_id=session_id,
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        memory_context=memory_context,
+        resolved_query=query,
+        conversation_history=conversation_history or [],
         # Routing
         intent="",
         intent_reason="",

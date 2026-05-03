@@ -24,6 +24,7 @@ import json
 import os
 import sqlite3
 import sys
+import uuid
 from typing import Optional
 
 import pandas as pd
@@ -148,6 +149,18 @@ with st.sidebar:
 
     if "query_history" not in st.session_state:
         st.session_state.query_history = []
+    if "conversation_id" not in st.session_state:
+        st.session_state.conversation_id = f"c-{uuid.uuid4().hex[:8]}"
+    if "conversation_turns" not in st.session_state:
+        st.session_state.conversation_turns = []
+
+    st.caption(f"Conversation: `{st.session_state.conversation_id}`")
+    if st.button("New conversation", use_container_width=True):
+        st.session_state.conversation_id = f"c-{uuid.uuid4().hex[:8]}"
+        st.session_state.conversation_turns = []
+        st.session_state.query_history = []
+        st.session_state.prefill_query = ""
+        st.rerun()
 
     if st.session_state.query_history:
         st.subheader("Recent Queries")
@@ -199,9 +212,22 @@ if page == "🔍 NL2SQL Query":
 
     if run_clicked and query.strip():
         with st.spinner("Agents working…"):
-            state = run_pipeline(query.strip())
+            state = run_pipeline(
+                query.strip(),
+                conversation_id=st.session_state.conversation_id,
+            )
 
         st.session_state.query_history.append(query.strip())
+        st.session_state.conversation_turns.append(
+            {
+                "query": query.strip(),
+                "resolved_query": state.get("resolved_query", query.strip()),
+                "success": state.get("success", False),
+                "summary_title": state.get("summary_title", ""),
+                "insight": state.get("insight", ""),
+                "fallback_message": state.get("fallback_message", ""),
+            }
+        )
         st.session_state.pop("prefill_query", None)
 
         if state["success"]:
@@ -229,6 +255,8 @@ if page == "🔍 NL2SQL Query":
                 st.dataframe(df, use_container_width=True)
 
             with st.expander("Generated SQL"):
+                if state.get("resolved_query") and state["resolved_query"] != query.strip():
+                    st.caption(f"Memory-resolved question: {state['resolved_query']}")
                 st.code(state["sql"], language="sql")
 
             if state.get("trace_file"):
@@ -265,6 +293,17 @@ if page == "🔍 NL2SQL Query":
                     if cols[i % 2].button(sug, key=f"sug_{i}"):
                         st.session_state.prefill_query = sug
                         st.rerun()
+
+    if st.session_state.conversation_turns:
+        with st.expander("Conversation memory", expanded=False):
+            for i, turn in enumerate(st.session_state.conversation_turns[-5:], start=1):
+                status = "Success" if turn["success"] else "Fallback"
+                st.markdown(f"**{i}. {status}:** {turn['query']}")
+                if turn["resolved_query"] != turn["query"]:
+                    st.caption(f"Resolved: {turn['resolved_query']}")
+                detail = turn.get("insight") or turn.get("fallback_message", "")
+                if detail:
+                    st.caption(detail[:240])
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

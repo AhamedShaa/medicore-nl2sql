@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import os
 import sys
+import uuid
+from pathlib import Path
 
 import pytest
 
@@ -32,6 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agents.fallback_agent import FallbackAgent
 from agents.validator_agent import ValidatorAgent
 from config import params
+from core.memory import ConversationMemory
 from core.state import make_initial_state
 
 
@@ -234,6 +237,8 @@ class TestLangGraphState:
         required = [
             "query", "session_id", "intent", "sql", "sql_attempts",
             "is_valid", "exec_rows", "exec_columns", "success",
+            "conversation_id", "turn_id", "memory_context", "resolved_query",
+            "conversation_history",
         ]
         for key in required:
             assert key in state, f"Missing key: {key}"
@@ -245,6 +250,55 @@ class TestLangGraphState:
         assert state["success"] is False
         assert state["sql_attempts"] == 0
         assert state["exec_rows"] == []
+        assert state["resolved_query"] == "hello"
+
+
+class TestConversationMemory:
+    """Verify multi-turn memory persists and formats recent turns."""
+
+    def _memory(self) -> ConversationMemory:
+        test_dir = Path("data/test_memory")
+        test_dir.mkdir(parents=True, exist_ok=True)
+        return ConversationMemory(str(test_dir / f"conversations_{uuid.uuid4().hex}.db"))
+
+    def test_memory_saves_and_loads_turns(self):
+        memory = self._memory()
+        state = {
+            "query": "Which doctors have the most appointments?",
+            "resolved_query": "Which doctors have the most appointments?",
+            "sql": "SELECT doctor_id, COUNT(*) AS appointments FROM appointments GROUP BY doctor_id",
+            "insight": "Doctor 1 has the most appointments.",
+            "summary_title": "Doctor Load",
+            "success": True,
+            "exec_row_count": 5,
+            "failure_category": "",
+        }
+
+        assert memory.next_turn_id("c-test") == 1
+        memory.save_turn("c-test", 1, state)
+        assert memory.next_turn_id("c-test") == 2
+
+        turns = memory.load_recent("c-test")
+        assert len(turns) == 1
+        assert turns[0]["user_query"] == state["query"]
+        assert turns[0]["success"] == 1
+
+    def test_memory_context_contains_prior_turn(self):
+        memory = self._memory()
+        state = {
+            "query": "Show revenue by department",
+            "resolved_query": "Show revenue by department",
+            "sql": "SELECT department_name, SUM(total_amount) AS revenue FROM billing_invoices",
+            "insight": "Cardiology leads revenue.",
+            "summary_title": "Revenue",
+            "success": True,
+            "exec_row_count": 3,
+        }
+        memory.save_turn("c-test", 1, state)
+
+        context = memory.build_context(memory.load_recent("c-test"))
+        assert "Show revenue by department" in context
+        assert "Cardiology leads revenue" in context
 
 
 # ── Config / params.yaml [NEW] ────────────────────────────────────────────────

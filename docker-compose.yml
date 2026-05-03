@@ -1,0 +1,17 @@
+services:
+  medicore-nl2sql:
+    build: .
+    container_name: medicore-nl2sql
+    env_file:
+      - .env
+    environment:
+      DB_PATH: /app/medicore.db
+      MEMORY_DB_PATH: /app/data/conversations.db
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./medicore.db:/app/medicore.db
+      - ./logs:/app/logs
+      - ./traces:/app/traces
+      - ./data:/app/data
+    restart: unless-stopped
